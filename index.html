@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Gecko</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #111;
+            color: #ccc;
+            font-family: system-ui, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #setup {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #setup h2 {
+            margin-bottom: 4px;
+        }
+
+        .file-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .file-row .file-label {
+            width: 100px;
+            text-align: right;
+            color: #aaa;
+            font-size: 14px;
+        }
+
+        .file-picker {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            flex: 0 0 auto;
+            width: auto;
+            white-space: nowrap;
+            line-height: 1.2;
+            text-align: center;
+        }
+
+        .file-row .name {
+            color: #8f8;
+            font-size: 14px;
+            min-width: 120px;
+        }
+
+        .file-picker,
+        #start {
+            background: #333;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .file-picker:hover,
+        #start:hover {
+            background: #444;
+            border-color: #8f8;
+        }
+
+        #start {
+            margin-top: 8px;
+            padding: 10px 32px;
+            font-size: 16px;
+            align-self: stretch;
+            text-align: center;
+        }
+
+        #start:disabled { opacity: 0.4; cursor: not-allowed; }
+        #status { max-width: min(90vw, 640px); color: #bbb; font-size: 13px; line-height: 1.5; text-align: center; }
+        #status.error { color: #ff8d8d; }
+        #status.ok { color: #9ee6a0; }
+        #setup h2 { color: #f2f2f2; }
+
+        canvas {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .file-picker input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- shoutout to hazel, vxpm, geo, pdawg, lycoder and everyone else :> -->
+
+    <div id="setup">
+        <h2>Gecko Web Emulator</h2>
+        <p id="status" role="status" aria-live="polite">Loading emulator runtime…</p>
+        <div class="file-row">
+            <label class="file-label">IPL / DOL:</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-rom" accept=".dol,.bin,.ipl">
+            </label>
+            <span class="name" id="rom-name">none</span>
+        </div>
+
+        <div class="file-row">
+            <label class="file-label">DSP IROM:</label>
+            <label class="file-picker">
+                <span>Choose file</span>
+                <input type="file" id="input-dsp" accept=".bin">
+            </label>
+            <span class="name" id="dsp-name">none</span>
+        </div>
+
+        <button id="start" disabled>Start</button>
+    </div>
+
+    <script type="module">
+        const statusEl = document.getElementById('status');
+        const inputRom = document.getElementById('input-rom');
+        const inputDsp = document.getElementById('input-dsp');
+        const romNameEl = document.getElementById('rom-name');
+        const dspNameEl = document.getElementById('dsp-name');
+        const startBtn = document.getElementById('start');
+        let startEmulator = null;
+        let romData = null;
+        let romName = '';
+        let dspData = null;
+
+        function setStatus(message, kind = '') {
+            statusEl.textContent = message;
+            statusEl.className = kind;
+        }
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(new Uint8Array(reader.result));
+                reader.onerror = () => reject(reader.error || new Error('Could not read selected file.'));
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        inputRom.addEventListener('change', async () => {
+            const file = inputRom.files?.[0];
+            if (!file) return;
+            startBtn.disabled = true;
+            try {
+                romData = await readFile(file);
+                romName = file.name;
+                romNameEl.textContent = `${file.name} (${file.size.toLocaleString()} bytes)`;
+                startBtn.disabled = !startEmulator;
+                setStatus(startEmulator ? 'Game file loaded. Press Start to launch.' : 'Game file loaded; waiting for emulator runtime.', 'ok');
+            } catch (error) {
+                romData = null;
+                romName = '';
+                romNameEl.textContent = 'none';
+                setStatus(`Could not read game file: ${error.message}`, 'error');
+            }
+        });
+
+        inputDsp.addEventListener('change', async () => {
+            const file = inputDsp.files?.[0];
+            if (!file) { dspData = null; dspNameEl.textContent = 'none'; return; }
+            try {
+                dspData = await readFile(file);
+                dspNameEl.textContent = `${file.name} (${file.size.toLocaleString()} bytes)`;
+                setStatus('DSP IROM loaded.', 'ok');
+            } catch (error) {
+                dspData = null;
+                dspNameEl.textContent = 'none';
+                setStatus(`Could not read DSP file: ${error.message}`, 'error');
+            }
+        });
+
+        startBtn.addEventListener('click', () => {
+            if (!romData || !startEmulator) {
+                setStatus('Choose a valid DOL or IPL/BIN file and wait for the emulator to finish loading.', 'error');
+                return;
+            }
+            if (!('gpu' in navigator)) {
+                setStatus('This browser does not expose WebGPU. Try a recent Chrome/Edge browser with WebGPU enabled.', 'error');
+                return;
+            }
+            startBtn.disabled = true;
+            setStatus('Starting emulator… if this fails, the error will be shown here.', '');
+            try {
+                startEmulator(romData, romName, dspData ?? undefined);
+                // Keep setup visible until the browser actually creates the emulator canvas.
+                window.setTimeout(() => {
+                    const canvas = document.querySelector('canvas');
+                    if (canvas) {
+                        document.getElementById('setup').style.display = 'none';
+                    } else {
+                        startBtn.disabled = false;
+                        setStatus('The emulator start command returned, but no display canvas appeared. Check the browser console and confirm the WASM build matches this page.', 'error');
+                    }
+                }, 2500);
+            } catch (error) {
+                startBtn.disabled = false;
+                setStatus(`Emulator could not start: ${error?.stack || error?.message || String(error)}`, 'error');
+                console.error(error);
+            }
+        });
+
+        try {
+            const { default: init, start_emulator } = await import('./pkg/gecko_web.js');
+            setStatus('Loading WebAssembly engine…');
+            await init();
+            startEmulator = start_emulator;
+            startBtn.disabled = !romData;
+            setStatus('Emulator engine loaded. Select a DOL or IPL/BIN file. GameCube system files may be required.', 'ok');
+        } catch (error) {
+            console.error('Gecko WebAssembly failed to load:', error);
+            setStatus(`Emulator engine failed to load. Confirm ./pkg/gecko_web.js and ./pkg/gecko_web_bg.wasm are deployed. Details: ${error?.message || String(error)}`, 'error');
+        }
+    </script>
+</body>
+</html>
